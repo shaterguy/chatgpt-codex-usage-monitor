@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Codex Usage Bar",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Codex 사용량·초기화권과 ChatGPT 웹 상태를 ChatGPT 헤더에 통합합니다.",
   "minimum_chrome_version": "111",
   "permissions": [

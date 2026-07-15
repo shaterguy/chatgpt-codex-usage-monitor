@@ -250,11 +250,52 @@
     return `${full} 리셋`;
   }
 
+  function resetWindowKey(usage) {
+    if (!isObject(usage) || !isObject(usage.primary)) return null;
+    const resetAt = numberOrNull(usage.primary.resetAt);
+    if (resetAt !== null && resetAt > 0) return `reset:${Math.floor(resetAt / 60_000)}`;
+    const windowSeconds = numberOrNull(usage.primary.windowSeconds);
+    return `active:${windowSeconds === null ? "unknown" : Math.round(windowSeconds)}`;
+  }
+
+  function evaluateResetPrompt(usage, settings, now) {
+    const currentTime = numberOrNull(now) ?? Date.now();
+    const policy = isObject(settings) ? settings : {};
+    const count = numberOrNull(usage && usage.credits && usage.credits.resetCreditsAvailable) || 0;
+    const remaining = numberOrNull(usage && usage.primary && usage.primary.remainingPercent);
+    const windowKey = resetWindowKey(usage);
+
+    if (!windowKey || remaining === null || remaining > 5 || count <= 0) {
+      return { shouldOffer: false, reason: "ineligible", windowKey, atZero: false };
+    }
+
+    const atZero = Math.round(remaining) <= 0;
+    if (policy.resetPromptSuppressUntilZeroWindowKey === windowKey && !atZero) {
+      return { shouldOffer: false, reason: "suppressed-until-zero", windowKey, atZero };
+    }
+
+    const snoozeUntil = numberOrNull(policy.resetPromptSnoozeUntil) || 0;
+    if (policy.resetPromptSnoozedWindowKey === windowKey && snoozeUntil > currentTime) {
+      return { shouldOffer: false, reason: "snoozed", windowKey, atZero };
+    }
+
+    return {
+      shouldOffer: true,
+      reason: atZero && policy.resetPromptSuppressUntilZeroWindowKey === windowKey
+        ? "zero-reached"
+        : "eligible",
+      windowKey,
+      atZero
+    };
+  }
+
   const api = Object.freeze({
     clamp,
+    evaluateResetPrompt,
     formatResetTime,
     normalizeUsage,
     normalizeWindow,
+    resetWindowKey,
     windowName
   });
 
