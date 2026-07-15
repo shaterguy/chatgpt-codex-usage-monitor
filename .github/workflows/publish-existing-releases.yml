@@ -1,0 +1,168 @@
+name: Publish existing releases
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/publish-existing-releases.yml
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      V120_COMMIT: c2ea633696267aea78982a616a14f51f0eaf4791
+      V121_COMMIT: 900be1e6247cd53e67f8b990ccc284c05f64e30d
+      V120_SHA256: f4a4cd170999c26c45bd8bd2e8d67d779af676bfee165a0959c4d790f3d85000
+      V121_SHA256: bdcdebcc6786642438cedb24f657d03ca3a9fdda38b041769231e8df18dceaca
+    steps:
+      - name: Check out complete history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate release commits
+        shell: bash
+        run: |
+          set -euo pipefail
+          git cat-file -e "${V120_COMMIT}^{commit}"
+          git cat-file -e "${V121_COMMIT}^{commit}"
+          git merge-base --is-ancestor "$V120_COMMIT" "$V121_COMMIT"
+
+      - name: Create version tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          ensure_tag() {
+            local tag="$1"
+            local target="$2"
+            if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+              test "$(git rev-list -n 1 "$tag")" = "$target"
+            else
+              git tag -a "$tag" "$target" -m "Codex Usage Bar $tag"
+              git push origin "refs/tags/$tag"
+            fi
+          }
+          ensure_tag v1.2.0 "$V120_COMMIT"
+          ensure_tag v1.2.1 "$V121_COMMIT"
+
+      - name: Rebuild and verify release archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist notes
+
+          for suffix in 00 01 02 03 04; do
+            git show "${V120_COMMIT}:release/codex-usage-bar-v1.2.0.zip.b64.part${suffix}"
+          done | tr -d '\r\n' | base64 -d > dist/codex-usage-bar-v1.2.0.zip
+
+          cat release/codex-usage-bar-v1.2.1.zip.b64.part* |
+            tr -d '\r\n' |
+            base64 -d > dist/codex-usage-bar-v1.2.1.zip
+
+          printf '%s  %s\n' "$V120_SHA256" codex-usage-bar-v1.2.0.zip > dist/codex-usage-bar-v1.2.0.zip.sha256
+          printf '%s  %s\n' "$V121_SHA256" codex-usage-bar-v1.2.1.zip > dist/codex-usage-bar-v1.2.1.zip.sha256
+
+          cd dist
+          sha256sum -c codex-usage-bar-v1.2.0.zip.sha256
+          sha256sum -c codex-usage-bar-v1.2.1.zip.sha256
+          unzip -t codex-usage-bar-v1.2.0.zip
+          unzip -t codex-usage-bar-v1.2.1.zip
+
+      - name: Prepare release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > notes/v1.2.0.md <<'EOF'
+          ## 주요 변경 사항
+
+          - ChatGPT 우상단 헤더 통합형 Codex 사용량 캡슐
+          - 5시간·주간 한도 및 리셋 시각 상세 팝오버
+          - ChatGPT 웹 관련 서버 상태 요약 및 상세 목록
+          - 잔여량 5% 이하 초기화권 확인과 실제 사용 기능
+          - SPA 재렌더링 재삽입 및 이동형 대체 모드
+
+          ## 설치
+
+          ZIP을 압축 해제한 뒤 Chrome의 `chrome://extensions`에서 개발자 모드를 켜고 압축해제된 확장 프로그램으로 로드합니다.
+
+          ## 무결성
+
+          SHA-256: `f4a4cd170999c26c45bd8bd2e8d67d779af676bfee165a0959c4d790f3d85000`
+          EOF
+
+          cat > notes/v1.2.1.md <<'EOF'
+          ## 주요 변경 사항
+
+          - `나중에` 선택 시 같은 리셋 창의 알림을 30분간 보류
+          - `0%까지 알리지 않기` 버튼 추가
+          - 표시 잔여량 0% 도달 시 초기화권 확인 재표시
+          - 리셋 창 식별 안정화로 반복 알림 문제 수정
+          - 전체 소스와 회귀 테스트를 저장소 루트에 복구
+
+          ## 설치
+
+          ZIP을 압축 해제해 기존 폴더를 교체한 뒤 `chrome://extensions`에서 확장 프로그램을 새로고침합니다.
+
+          ## 무결성
+
+          SHA-256: `bdcdebcc6786642438cedb24f657d03ca3a9fdda38b041769231e8df18dceaca`
+          EOF
+
+      - name: Publish GitHub releases
+        shell: bash
+        run: |
+          set -euo pipefail
+          publish_release() {
+            local tag="$1"
+            local title="$2"
+            local notes_file="$3"
+            local archive="$4"
+            local checksum="$5"
+            if gh release view "$tag" >/dev/null 2>&1; then
+              gh release edit "$tag" --title "$title" --notes-file "$notes_file"
+              gh release upload "$tag" "$archive" "$checksum" --clobber
+            else
+              gh release create "$tag" "$archive" "$checksum" \
+                --verify-tag \
+                --title "$title" \
+                --notes-file "$notes_file"
+            fi
+          }
+
+          publish_release v1.2.0 "Codex Usage Bar v1.2.0" notes/v1.2.0.md \
+            dist/codex-usage-bar-v1.2.0.zip dist/codex-usage-bar-v1.2.0.zip.sha256
+          publish_release v1.2.1 "Codex Usage Bar v1.2.1" notes/v1.2.1.md \
+            dist/codex-usage-bar-v1.2.1.zip dist/codex-usage-bar-v1.2.1.zip.sha256
+
+      - name: Record verified publication
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL_120=$(gh release view v1.2.0 --json url --jq .url)
+          URL_121=$(gh release view v1.2.1 --json url --jq .url)
+
+          cat > release/PUBLISHED.md <<EOF
+          # Published GitHub Releases
+
+          - v1.2.0: $URL_120
+            - Commit: \`$V120_COMMIT\`
+            - SHA-256: \`$V120_SHA256\`
+          - v1.2.1: $URL_121
+            - Commit: \`$V121_COMMIT\`
+            - SHA-256: \`$V121_SHA256\`
+
+          Verification workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EOF
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add release/PUBLISHED.md
+          if ! git diff --cached --quiet; then
+            git commit -m "Record formal GitHub releases"
+            git push origin HEAD:main
+          fi
