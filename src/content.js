@@ -4,14 +4,14 @@
   if (window.top !== window || document.getElementById("codex-usage-bar-host")) return;
 
   const core = globalThis.CodexUsageCore;
-  if (!core) return;
+  const layoutCore = globalThis.CodexUsageLayoutCore;
+  if (!core || !layoutCore) return;
 
   const REQUEST_EVENT = "codex-usage-bar:request";
   const RESPONSE_EVENT = "codex-usage-bar:response";
   const STORAGE_KEY = "codexUsageBarSettingsV1";
   const RESET_PROMPT_SNOOZE_MS = 30 * 60 * 1000;
   const DEFAULT_SETTINGS = Object.freeze({
-    position: null,
     expanded: false,
     pollIntervalSeconds: 60,
     resetPromptSnoozedWindowKey: null,
@@ -45,8 +45,7 @@
     layoutMode: "pending",
     mountTimer: null,
     lastMountAttemptAt: 0,
-    dragging: false,
-    movedDuringDrag: false
+    sidebarRoot: null
   };
 
   const host = document.createElement("div");
@@ -74,7 +73,7 @@
   card.setAttribute("role", "region");
   card.setAttribute("aria-label", "Codex 사용량");
   card.innerHTML = `
-    <div class="cub-summary" id="cub-summary" role="button" tabindex="0" aria-expanded="false" aria-label="Codex 사용량 상세 열기. 드래그하여 이동할 수 있습니다.">
+    <div class="cub-summary" id="cub-summary" role="button" tabindex="0" aria-expanded="false" aria-label="Codex 사용량 상세 열기.">
       <div class="cub-brand" aria-hidden="true">&gt;_</div>
       <div class="cub-summary-main">
         <div class="cub-summary-labels">
@@ -145,7 +144,6 @@
           <option value="120">2분</option>
           <option value="300">5분</option>
         </select>
-        <button id="cub-reset-position" type="button">대체 위젯 위치 초기화</button>
       </div>
       <div class="cub-footer">
         <span id="cub-updated">확인 중</span>
@@ -211,7 +209,6 @@
     settingsButton: shadow.getElementById("cub-settings-button"),
     settings: shadow.getElementById("cub-settings"),
     interval: shadow.getElementById("cub-interval"),
-    resetPosition: shadow.getElementById("cub-reset-position"),
     resetDialog,
     resetRemaining: shadow.getElementById("cub-reset-remaining"),
     resetCount: shadow.getElementById("cub-reset-count"),
@@ -237,7 +234,8 @@
   async function loadSettings() {
     try {
       const stored = await chrome.storage.local.get(STORAGE_KEY);
-      state.settings = { ...DEFAULT_SETTINGS, ...(stored[STORAGE_KEY] || {}) };
+      const { position: _legacyPosition, ...savedSettings } = stored[STORAGE_KEY] || {};
+      state.settings = { ...DEFAULT_SETTINGS, ...savedSettings };
     } catch (_error) {
       state.settings = { ...DEFAULT_SETTINGS };
     }
@@ -253,25 +251,6 @@
     saveTimer = setTimeout(() => {
       chrome.storage.local.set({ [STORAGE_KEY]: state.settings }).catch(() => {});
     }, 120);
-  }
-
-  function defaultPosition() {
-    const width = host.getBoundingClientRect().width || 276;
-    return { x: Math.max(12, window.innerWidth - width - 24), y: 76 };
-  }
-
-  function applyPosition(position) {
-    if (state.layoutMode !== "floating") return position || state.settings.position;
-    const rect = host.getBoundingClientRect();
-    const margin = 8;
-    const maximumX = Math.max(margin, window.innerWidth - rect.width - margin);
-    const maximumY = Math.max(margin, window.innerHeight - rect.height - margin);
-    const target = position || defaultPosition();
-    const x = core.clamp(Number(target.x) || 0, margin, maximumX);
-    const y = core.clamp(Number(target.y) || 0, margin, maximumY);
-    host.style.left = `${Math.round(x)}px`;
-    host.style.top = `${Math.round(y)}px`;
-    return { x: Math.round(x), y: Math.round(y) };
   }
 
   function directChildBelow(node, ancestor) {
@@ -327,11 +306,46 @@
     return null;
   }
 
-  function findHeaderMountTarget() {
-    const roots = [...new Set([
-      ...document.querySelectorAll("header, [role='banner'], [data-testid*='header']"),
-      document
-    ])];
+  function findSidebarRoot(element) {
+    if (!element) return null;
+    const explicitSelectors = [
+      "aside",
+      "[data-testid*='sidebar' i]",
+      "[data-testid*='side-bar' i]",
+      "[id*='sidebar' i]",
+      "[class*='sidebar' i]",
+      "nav[aria-label*='chat' i]",
+      "nav[aria-label*='대화']"
+    ].join(",");
+    const minimumHeight = Math.min(240, window.innerHeight * 0.45);
+    let semanticCandidate = null;
+    let semanticScore = -1;
+    let geometryCandidate = null;
+    let geometryScore = -1;
+    let current = element;
+    for (let depth = 0; current && depth < 14; depth += 1, current = current.parentElement) {
+      const rect = current.getBoundingClientRect();
+      const isLeftRail = rect.left <= 24 && rect.right > 0 && rect.width > 0 &&
+        rect.width <= 420 && rect.height >= minimumHeight;
+      if (!isLeftRail) continue;
+      const score = rect.height * Math.min(rect.width, 420);
+      if (score > geometryScore) {
+        geometryCandidate = current;
+        geometryScore = score;
+      }
+      try {
+        if (current.matches(explicitSelectors) && score > semanticScore) {
+          semanticCandidate = current;
+          semanticScore = score;
+        }
+      } catch (_error) {
+        // 선택자를 지원하지 않는 환경에서는 기하 판정만 사용한다.
+      }
+    }
+    return semanticCandidate || geometryCandidate;
+  }
+
+  function findSidebarMountTarget() {
     const newChatSelectors = [
       "[data-testid='create-new-chat-button']",
       "[data-testid='new-chat-button']",
@@ -350,24 +364,34 @@
     const newChatPattern = /(?:new\s*chat|새\s*채팅|새로운\s*채팅)/i;
     const planPattern = /(?:chatgpt\s*)?(?:plus|pro)\b|플러스|업그레이드/i;
 
+    const explicitSidebarRoots = [...document.querySelectorAll([
+      "aside",
+      "[data-testid*='sidebar' i]",
+      "[data-testid*='side-bar' i]",
+      "[id*='sidebar' i]",
+      "[class*='sidebar' i]",
+      "nav[aria-label*='chat' i]",
+      "nav[aria-label*='대화']"
+    ].join(","))];
+    const roots = [...new Set([...explicitSidebarRoots, document])];
+
     for (const root of roots) {
       const newChat = findSemanticElement(root, newChatSelectors, newChatPattern);
       if (!newChat) continue;
-      const plan = findSemanticElement(root, planSelectors, planPattern);
+      const sidebar = findSidebarRoot(newChat);
+      if (!sidebar || !sidebar.isConnected) continue;
+      const plan = findSemanticElement(sidebar, planSelectors, planPattern);
       const exact = commonMountTarget(plan, newChat);
-      if (exact) return exact;
-      if (root !== document) {
-        const nearby = nearbyNewChatTarget(newChat, root);
-        if (nearby) return nearby;
-      }
+      if (exact && sidebar.contains(exact.container)) return { ...exact, sidebar };
+      const nearby = nearbyNewChatTarget(newChat, sidebar);
+      if (nearby) return { ...nearby, sidebar };
     }
     return null;
   }
 
   function updateSummaryAria() {
     const action = state.settings.expanded ? "Codex 사용량 상세 닫기" : "Codex 사용량 상세 열기";
-    const movement = state.layoutMode === "floating" ? " 드래그하여 이동할 수 있습니다." : "";
-    elements.summary.setAttribute("aria-label", `${action}.${movement}`.trim());
+    elements.summary.setAttribute("aria-label", action + ".");
   }
 
   function positionPopover() {
@@ -385,8 +409,41 @@
     card.style.setProperty("--cub-popover-width", `${Math.round(width)}px`);
   }
 
+  let observedSidebar = null;
+  const sidebarResizeObserver = typeof ResizeObserver === "function"
+    ? new ResizeObserver(() => updateSidebarDensity(observedSidebar))
+    : null;
+
+  function updateSidebarDensity(sidebar) {
+    if (!sidebar || !sidebar.isConnected || state.layoutMode !== "integrated") return;
+    const rect = sidebar.getBoundingClientRect();
+    const density = layoutCore.classifySidebarWidth(rect.width || sidebar.clientWidth);
+    host.dataset.sidebar = density === "collapsed" ? "collapsed" : "expanded";
+    requestAnimationFrame(positionPopover);
+  }
+
+  function observeSidebar(sidebar) {
+    if (observedSidebar === sidebar) {
+      updateSidebarDensity(sidebar);
+      return;
+    }
+    if (sidebarResizeObserver) sidebarResizeObserver.disconnect();
+    observedSidebar = sidebar || null;
+    state.sidebarRoot = observedSidebar;
+    if (sidebarResizeObserver && observedSidebar) sidebarResizeObserver.observe(observedSidebar);
+    updateSidebarDensity(observedSidebar);
+  }
+
+  function applyExpandedVisualState(available) {
+    const expanded = Boolean(available && state.settings.expanded);
+    setTopLayerVisible(elements.popover, expanded);
+    elements.details.hidden = !expanded;
+    elements.summary.setAttribute("aria-expanded", String(expanded));
+    card.classList.toggle("cub-expanded", expanded);
+  }
+
   function mountIntegrated(target) {
-    if (!target || !target.container || !target.before || !target.container.isConnected) return false;
+    if (!target || !target.container || !target.before || !target.sidebar || !target.container.isConnected) return false;
     if (host.parentElement !== target.container || host.nextSibling !== target.before) {
       target.container.insertBefore(host, target.before);
     }
@@ -396,33 +453,40 @@
     host.style.zIndex = "auto";
     host.style.left = "auto";
     host.style.top = "auto";
-    host.style.width = "auto";
-    host.style.height = "auto";
+    host.style.removeProperty("width");
+    host.style.removeProperty("height");
     host.style.visibility = "visible";
+    host.style.pointerEvents = "auto";
+    observeSidebar(target.sidebar);
+    applyExpandedVisualState(true);
     updateSummaryAria();
     requestAnimationFrame(positionPopover);
     return true;
   }
 
-  function mountFloating() {
+  function mountHidden() {
+    if (sidebarResizeObserver) sidebarResizeObserver.disconnect();
+    observedSidebar = null;
+    state.sidebarRoot = null;
     if (host.parentElement !== document.documentElement) document.documentElement.appendChild(host);
-    state.layoutMode = "floating";
-    host.dataset.layout = "floating";
+    state.layoutMode = "hidden";
+    host.dataset.layout = "hidden";
+    delete host.dataset.sidebar;
     host.style.position = "fixed";
     host.style.zIndex = "2147483646";
-    host.style.width = "max-content";
-    host.style.height = "max-content";
-    host.style.visibility = "visible";
-    state.settings.position = applyPosition(state.settings.position);
+    host.style.left = "0px";
+    host.style.top = "0px";
+    host.style.visibility = "hidden";
+    host.style.pointerEvents = "none";
+    applyExpandedVisualState(false);
     updateSummaryAria();
-    requestAnimationFrame(positionPopover);
   }
 
   function ensureMounted() {
     state.mountTimer = null;
     state.lastMountAttemptAt = Date.now();
-    const target = findHeaderMountTarget();
-    if (!mountIntegrated(target)) mountFloating();
+    const target = findSidebarMountTarget();
+    if (!mountIntegrated(target)) mountHidden();
   }
 
   function scheduleMount(delay) {
@@ -456,14 +520,10 @@
 
   function setExpanded(expanded, persist) {
     state.settings.expanded = Boolean(expanded);
-    setTopLayerVisible(elements.popover, state.settings.expanded);
-    elements.details.hidden = !state.settings.expanded;
-    elements.summary.setAttribute("aria-expanded", String(state.settings.expanded));
+    applyExpandedVisualState(state.layoutMode === "integrated");
     updateSummaryAria();
-    card.classList.toggle("cub-expanded", state.settings.expanded);
     if (persist) saveSettings();
     requestAnimationFrame(() => {
-      if (state.layoutMode === "floating") state.settings.position = applyPosition(state.settings.position);
       positionPopover();
       if (persist) saveSettings();
     });
@@ -973,7 +1033,7 @@
 
   const observer = new MutationObserver((mutations) => {
     if (!host.isConnected) scheduleMount(0);
-    else if (state.layoutMode === "floating" && Date.now() - state.lastMountAttemptAt > 2_000) scheduleMount(120);
+    else if (state.layoutMode === "hidden" && Date.now() - state.lastMountAttemptAt > 2_000) scheduleMount(120);
     else if (state.layoutMode === "integrated" && Date.now() - state.lastMountAttemptAt > 2_000) scheduleMount(180);
     if (mutations.some(mutationTouchesAssistant)) scheduleActivityRefresh(3200);
     if (!state.generationCheckTimer) {
@@ -1001,16 +1061,12 @@
   });
   window.addEventListener("focus", () => refreshAll("focus", false));
   window.addEventListener("resize", () => {
-    if (state.layoutMode === "floating") {
-      state.settings.position = applyPosition(state.settings.position);
-      saveSettings();
-    }
+    updateSidebarDensity(state.sidebarRoot);
     positionPopover();
   });
   window.addEventListener("scroll", positionPopover, true);
 
   function toggleExpanded() {
-    if (state.movedDuringDrag) return;
     setExpanded(!state.settings.expanded, true);
   }
 
@@ -1026,50 +1082,8 @@
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       toggleExpanded();
-      return;
     }
-    if (state.layoutMode !== "floating") return;
-    const movement = event.shiftKey ? 1 : 10;
-    const position = state.settings.position || defaultPosition();
-    if (event.key === "ArrowLeft") position.x -= movement;
-    else if (event.key === "ArrowRight") position.x += movement;
-    else if (event.key === "ArrowUp") position.y -= movement;
-    else if (event.key === "ArrowDown") position.y += movement;
-    else return;
-    event.preventDefault();
-    state.settings.position = applyPosition(position);
-    saveSettings();
   });
-
-  let dragStart = null;
-  elements.summary.addEventListener("pointerdown", (event) => {
-    if (state.layoutMode !== "floating" || event.button !== 0 || event.target.closest("button")) return;
-    const rect = host.getBoundingClientRect();
-    dragStart = { pointerX: event.clientX, pointerY: event.clientY, x: rect.left, y: rect.top };
-    state.dragging = true;
-    state.movedDuringDrag = false;
-    card.classList.add("cub-dragging");
-    elements.summary.setPointerCapture(event.pointerId);
-  });
-  elements.summary.addEventListener("pointermove", (event) => {
-    if (!state.dragging || !dragStart) return;
-    const dx = event.clientX - dragStart.pointerX;
-    const dy = event.clientY - dragStart.pointerY;
-    if (Math.hypot(dx, dy) > 4) state.movedDuringDrag = true;
-    state.settings.position = applyPosition({ x: dragStart.x + dx, y: dragStart.y + dy });
-    event.preventDefault();
-  });
-  function finishDrag(event) {
-    if (!state.dragging) return;
-    state.dragging = false;
-    card.classList.remove("cub-dragging");
-    if (elements.summary.hasPointerCapture(event.pointerId)) elements.summary.releasePointerCapture(event.pointerId);
-    saveSettings();
-    if (state.movedDuringDrag) setTimeout(() => { state.movedDuringDrag = false; }, 0);
-    dragStart = null;
-  }
-  elements.summary.addEventListener("pointerup", finishDrag);
-  elements.summary.addEventListener("pointercancel", finishDrag);
 
   elements.refresh.addEventListener("click", () => refreshAll("manual", true));
   elements.useReset.addEventListener("click", () => openResetDialog("manual"));
@@ -1091,33 +1105,18 @@
   });
   elements.settingsButton.addEventListener("click", () => {
     elements.settings.hidden = !elements.settings.hidden;
-    requestAnimationFrame(() => {
-      state.settings.position = applyPosition(state.settings.position);
-      saveSettings();
-    });
+    requestAnimationFrame(positionPopover);
   });
   elements.interval.addEventListener("change", () => {
     state.settings.pollIntervalSeconds = Number(elements.interval.value);
     saveSettings();
     restartPolling();
   });
-  elements.resetPosition.addEventListener("click", () => {
-    if (state.layoutMode !== "floating") return;
-    state.settings.position = applyPosition(defaultPosition());
-    saveSettings();
-  });
-
   await loadSettings();
   elements.interval.value = String(state.settings.pollIntervalSeconds);
   ensureMounted();
   setExpanded(state.settings.expanded, false);
-  requestAnimationFrame(() => {
-    if (state.layoutMode === "floating") {
-      state.settings.position = applyPosition(state.settings.position);
-      saveSettings();
-    }
-    positionPopover();
-  });
+  requestAnimationFrame(positionPopover);
   restartPolling();
   render();
   refreshAll("initial", true);
