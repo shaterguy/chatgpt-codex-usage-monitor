@@ -14,14 +14,17 @@ jobs:
     if: >-
       github.event_name != 'issues' ||
       github.event.issue.title == '[release-bot] Publish v1.2.0 and v1.2.1' ||
-      github.event.issue.title == '[release-bot] Publish v1.2.2'
+      github.event.issue.title == '[release-bot] Publish v1.2.2' ||
+      github.event.issue.title == '[release-bot] Publish v1.2.3'
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
       V120_COMMIT: c2ea633696267aea78982a616a14f51f0eaf4791
       V121_COMMIT: 900be1e6247cd53e67f8b990ccc284c05f64e30d
+      V122_COMMIT: e4b5e359391fd847fa61db21d25dd6f5b54da4b3
       V120_SHA256: f4a4cd170999c26c45bd8bd2e8d67d779af676bfee165a0959c4d790f3d85000
       V121_SHA256: bdcdebcc6786642438cedb24f657d03ca3a9fdda38b041769231e8df18dceaca
+      V122_SHA256: 7e53d64740e3f9edb210ace7331137582759fb18bf92c3e63abad2b5fb95ee3b
     steps:
       - name: Check out complete history
         uses: actions/checkout@v4
@@ -34,11 +37,13 @@ jobs:
           set -euo pipefail
           git cat-file -e "${V120_COMMIT}^{commit}"
           git cat-file -e "${V121_COMMIT}^{commit}"
+          git cat-file -e "${V122_COMMIT}^{commit}"
           git merge-base --is-ancestor "$V120_COMMIT" "$V121_COMMIT"
-          V122_COMMIT=$(git rev-parse HEAD)
-          test "$(node -p "require('./manifest.json').version")" = "1.2.2"
-          test "$(node -p "require('./package.json').version")" = "1.2.2"
-          echo "V122_COMMIT=$V122_COMMIT" >> "$GITHUB_ENV"
+          git merge-base --is-ancestor "$V121_COMMIT" "$V122_COMMIT"
+          V123_COMMIT=$(git rev-parse HEAD)
+          test "$(node -p "require('./manifest.json').version")" = "1.2.3"
+          test "$(node -p "require('./package.json').version")" = "1.2.3"
+          echo "V123_COMMIT=$V123_COMMIT" >> "$GITHUB_ENV"
 
       - name: Run tests and checks
         shell: bash
@@ -66,6 +71,7 @@ jobs:
           ensure_tag v1.2.0 "$V120_COMMIT"
           ensure_tag v1.2.1 "$V121_COMMIT"
           ensure_tag v1.2.2 "$V122_COMMIT"
+          ensure_tag v1.2.3 "$V123_COMMIT"
 
       - name: Rebuild and verify release archives
         shell: bash
@@ -83,21 +89,26 @@ jobs:
 
           git archive --format=zip --output=dist/codex-usage-bar-v1.2.2.zip \
             "$V122_COMMIT" manifest.json README.md src
-          V122_SHA256=$(sha256sum dist/codex-usage-bar-v1.2.2.zip | awk '{print $1}')
-          echo "V122_SHA256=$V122_SHA256" >> "$GITHUB_ENV"
-          printf '%s  %s\n' "$V122_SHA256" codex-usage-bar-v1.2.2.zip > dist/codex-usage-bar-v1.2.2.zip.sha256
+          git archive --format=zip --output=dist/codex-usage-bar-v1.2.3.zip \
+            "$V123_COMMIT" manifest.json README.md src
+          V123_SHA256=$(sha256sum dist/codex-usage-bar-v1.2.3.zip | awk '{print $1}')
+          echo "V123_SHA256=$V123_SHA256" >> "$GITHUB_ENV"
+          printf '%s  %s\n' "$V123_SHA256" codex-usage-bar-v1.2.3.zip > dist/codex-usage-bar-v1.2.3.zip.sha256
 
           printf '%s  %s\n' "$V120_SHA256" codex-usage-bar-v1.2.0.zip > dist/codex-usage-bar-v1.2.0.zip.sha256
           printf '%s  %s\n' "$V121_SHA256" codex-usage-bar-v1.2.1.zip > dist/codex-usage-bar-v1.2.1.zip.sha256
+          printf '%s  %s\n' "$V122_SHA256" codex-usage-bar-v1.2.2.zip > dist/codex-usage-bar-v1.2.2.zip.sha256
 
           cd dist
           sha256sum -c codex-usage-bar-v1.2.0.zip.sha256
           sha256sum -c codex-usage-bar-v1.2.1.zip.sha256
           sha256sum -c codex-usage-bar-v1.2.2.zip.sha256
+          sha256sum -c codex-usage-bar-v1.2.3.zip.sha256
           unzip -t codex-usage-bar-v1.2.0.zip
           unzip -t codex-usage-bar-v1.2.1.zip
           unzip -t codex-usage-bar-v1.2.2.zip
-          unzip -p codex-usage-bar-v1.2.2.zip manifest.json | grep -q '"version": "1.2.2"'
+          unzip -t codex-usage-bar-v1.2.3.zip
+          unzip -p codex-usage-bar-v1.2.3.zip manifest.json | grep -q '"version": "1.2.3"'
 
       - name: Prepare release notes
         shell: bash
@@ -157,6 +168,22 @@ jobs:
           SHA-256: $V122_SHA256
           EOF
 
+          cat > notes/v1.2.3.md <<EOF
+          ## 주요 변경 사항
+
+          - 접힌 사이드바에서 축약형 사용량 위젯을 아이콘 열의 가로 중앙에 정렬
+          - block, flex, grid 부모 레이아웃 모두에 대응하는 중앙 정렬 규칙 적용
+          - 접힌 상태 중앙 정렬 CSS 회귀 테스트 추가
+
+          ## 설치
+
+          ZIP을 압축 해제해 기존 폴더를 교체한 뒤 chrome://extensions에서 확장 프로그램을 새로고침합니다.
+
+          ## 무결성
+
+          SHA-256: $V123_SHA256
+          EOF
+
       - name: Publish GitHub releases
         shell: bash
         run: |
@@ -184,10 +211,12 @@ jobs:
             dist/codex-usage-bar-v1.2.1.zip dist/codex-usage-bar-v1.2.1.zip.sha256
           publish_release v1.2.2 "Codex Usage Bar v1.2.2" notes/v1.2.2.md \
             dist/codex-usage-bar-v1.2.2.zip dist/codex-usage-bar-v1.2.2.zip.sha256
+          publish_release v1.2.3 "Codex Usage Bar v1.2.3" notes/v1.2.3.md \
+            dist/codex-usage-bar-v1.2.3.zip dist/codex-usage-bar-v1.2.3.zip.sha256
 
-          ASSET_NAMES=$(gh release view v1.2.2 --json assets --jq '.assets[].name')
-          grep -qx 'codex-usage-bar-v1.2.2.zip' <<<"$ASSET_NAMES"
-          grep -qx 'codex-usage-bar-v1.2.2.zip.sha256' <<<"$ASSET_NAMES"
+          ASSET_NAMES=$(gh release view v1.2.3 --json assets --jq '.assets[].name')
+          grep -qx 'codex-usage-bar-v1.2.3.zip' <<<"$ASSET_NAMES"
+          grep -qx 'codex-usage-bar-v1.2.3.zip.sha256' <<<"$ASSET_NAMES"
 
       - name: Record verified publication
         shell: bash
@@ -196,6 +225,7 @@ jobs:
           URL_120=$(gh release view v1.2.0 --json url --jq .url)
           URL_121=$(gh release view v1.2.1 --json url --jq .url)
           URL_122=$(gh release view v1.2.2 --json url --jq .url)
+          URL_123=$(gh release view v1.2.3 --json url --jq .url)
 
           cat > release/PUBLISHED.md <<EOF
           # Published GitHub Releases
@@ -209,6 +239,9 @@ jobs:
           - v1.2.2: $URL_122
             - Commit: \`$V122_COMMIT\`
             - SHA-256: \`$V122_SHA256\`
+          - v1.2.3: $URL_123
+            - Commit: \`$V123_COMMIT\`
+            - SHA-256: \`$V123_SHA256\`
 
           Verification workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           EOF
@@ -220,4 +253,3 @@ jobs:
             git commit -m "Record formal GitHub releases"
             git push origin HEAD:main
           fi
-
