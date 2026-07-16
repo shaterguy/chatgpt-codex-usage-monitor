@@ -9,5 +9,8 @@
 - v1.2.2: https://github.com/shaterguy/chatgpt-codex-usage-monitor/releases/tag/v1.2.2
   - Commit: `e4b5e359391fd847fa61db21d25dd6f5b54da4b3`
   - SHA-256: `7e53d64740e3f9edb210ace7331137582759fb18bf92c3e63abad2b5fb95ee3b`
+- v1.2.3: https://github.com/shaterguy/chatgpt-codex-usage-monitor/releases/tag/v1.2.3
+  - Commit: `61ee991e0b837d19ce8d8518c016ac49c55db7cb`
+  - SHA-256: `1fdc789d707c82e55848be2b75e0456a9157f249c5a5fca4e645c8d455020d5d`
 
-Verification workflow: https://github.com/shaterguy/chatgpt-codex-usage-monitor/actions/runs/29499908880
+Verification workflow: https://github.com/shaterguy/chatgpt-codex-usage-monitor/actions/runs/29500860669
