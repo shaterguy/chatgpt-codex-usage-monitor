@@ -5,11 +5,6 @@ on:
   issues:
     types:
       - opened
-  push:
-    branches:
-      - main
-    paths:
-      - .github/workflows/publish-existing-releases.yml
 
 permissions:
   contents: write
@@ -18,7 +13,8 @@ jobs:
   publish:
     if: >-
       github.event_name != 'issues' ||
-      github.event.issue.title == '[release-bot] Publish v1.2.0 and v1.2.1'
+      github.event.issue.title == '[release-bot] Publish v1.2.0 and v1.2.1' ||
+      github.event.issue.title == '[release-bot] Publish v1.2.2'
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
@@ -39,6 +35,17 @@ jobs:
           git cat-file -e "${V120_COMMIT}^{commit}"
           git cat-file -e "${V121_COMMIT}^{commit}"
           git merge-base --is-ancestor "$V120_COMMIT" "$V121_COMMIT"
+          V122_COMMIT=$(git rev-parse HEAD)
+          test "$(node -p "require('./manifest.json').version")" = "1.2.2"
+          test "$(node -p "require('./package.json').version")" = "1.2.2"
+          echo "V122_COMMIT=$V122_COMMIT" >> "$GITHUB_ENV"
+
+      - name: Run tests and checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm test
+          npm run check
 
       - name: Create version tags
         shell: bash
@@ -58,6 +65,7 @@ jobs:
           }
           ensure_tag v1.2.0 "$V120_COMMIT"
           ensure_tag v1.2.1 "$V121_COMMIT"
+          ensure_tag v1.2.2 "$V122_COMMIT"
 
       - name: Rebuild and verify release archives
         shell: bash
@@ -73,14 +81,23 @@ jobs:
             tr -d '\r\n' |
             base64 -d > dist/codex-usage-bar-v1.2.1.zip
 
+          git archive --format=zip --output=dist/codex-usage-bar-v1.2.2.zip \
+            "$V122_COMMIT" manifest.json README.md src
+          V122_SHA256=$(sha256sum dist/codex-usage-bar-v1.2.2.zip | awk '{print $1}')
+          echo "V122_SHA256=$V122_SHA256" >> "$GITHUB_ENV"
+          printf '%s  %s\n' "$V122_SHA256" codex-usage-bar-v1.2.2.zip > dist/codex-usage-bar-v1.2.2.zip.sha256
+
           printf '%s  %s\n' "$V120_SHA256" codex-usage-bar-v1.2.0.zip > dist/codex-usage-bar-v1.2.0.zip.sha256
           printf '%s  %s\n' "$V121_SHA256" codex-usage-bar-v1.2.1.zip > dist/codex-usage-bar-v1.2.1.zip.sha256
 
           cd dist
           sha256sum -c codex-usage-bar-v1.2.0.zip.sha256
           sha256sum -c codex-usage-bar-v1.2.1.zip.sha256
+          sha256sum -c codex-usage-bar-v1.2.2.zip.sha256
           unzip -t codex-usage-bar-v1.2.0.zip
           unzip -t codex-usage-bar-v1.2.1.zip
+          unzip -t codex-usage-bar-v1.2.2.zip
+          unzip -p codex-usage-bar-v1.2.2.zip manifest.json | grep -q '"version": "1.2.2"'
 
       - name: Prepare release notes
         shell: bash
@@ -122,6 +139,24 @@ jobs:
           SHA-256: `bdcdebcc6786642438cedb24f657d03ca3a9fdda38b041769231e8df18dceaca`
           EOF
 
+          cat > notes/v1.2.2.md <<EOF
+          ## 주요 변경 사항
+
+          - 사이드바가 없는 ChatGPT 화면에서는 위젯을 표시하지 않도록 변경
+          - 사이드바를 접으면 32px 축약형으로 자동 전환
+          - 축약형에서 잔여 퍼센트, 진행 막대와 ChatGPT 상태점 유지
+          - 플로팅 대체 모드와 위치 저장·드래그 관련 코드 제거
+          - 실제 사이드바 폭 판정 회귀 테스트 추가
+
+          ## 설치
+
+          ZIP을 압축 해제해 기존 폴더를 교체한 뒤 chrome://extensions에서 확장 프로그램을 새로고침합니다.
+
+          ## 무결성
+
+          SHA-256: $V122_SHA256
+          EOF
+
       - name: Publish GitHub releases
         shell: bash
         run: |
@@ -147,6 +182,12 @@ jobs:
             dist/codex-usage-bar-v1.2.0.zip dist/codex-usage-bar-v1.2.0.zip.sha256
           publish_release v1.2.1 "Codex Usage Bar v1.2.1" notes/v1.2.1.md \
             dist/codex-usage-bar-v1.2.1.zip dist/codex-usage-bar-v1.2.1.zip.sha256
+          publish_release v1.2.2 "Codex Usage Bar v1.2.2" notes/v1.2.2.md \
+            dist/codex-usage-bar-v1.2.2.zip dist/codex-usage-bar-v1.2.2.zip.sha256
+
+          ASSET_NAMES=$(gh release view v1.2.2 --json assets --jq '.assets[].name')
+          grep -qx 'codex-usage-bar-v1.2.2.zip' <<<"$ASSET_NAMES"
+          grep -qx 'codex-usage-bar-v1.2.2.zip.sha256' <<<"$ASSET_NAMES"
 
       - name: Record verified publication
         shell: bash
@@ -154,6 +195,7 @@ jobs:
           set -euo pipefail
           URL_120=$(gh release view v1.2.0 --json url --jq .url)
           URL_121=$(gh release view v1.2.1 --json url --jq .url)
+          URL_122=$(gh release view v1.2.2 --json url --jq .url)
 
           cat > release/PUBLISHED.md <<EOF
           # Published GitHub Releases
@@ -164,6 +206,9 @@ jobs:
           - v1.2.1: $URL_121
             - Commit: \`$V121_COMMIT\`
             - SHA-256: \`$V121_SHA256\`
+          - v1.2.2: $URL_122
+            - Commit: \`$V122_COMMIT\`
+            - SHA-256: \`$V122_SHA256\`
 
           Verification workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           EOF
@@ -175,3 +220,4 @@ jobs:
             git commit -m "Record formal GitHub releases"
             git push origin HEAD:main
           fi
+
