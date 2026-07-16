@@ -1,10 +1,10 @@
 {
   "name": "codex-usage-bar",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "private": true,
   "description": "ChatGPT 웹에서 현재 계정의 Codex 사용량을 보여 주는 Chrome 확장 프로그램",
   "scripts": {
     "test": "node --test tests/*.test.cjs",
-    "check": "node --check src/page-bridge.js && node --check src/usage-core.js && node --check src/status-core.js && node --check src/service-worker.js && node --check src/content.js"
+    "check": "node --check src/page-bridge.js && node --check src/usage-core.js && node --check src/layout-core.js && node --check src/status-core.js && node --check src/service-worker.js && node --check src/content.js"
   }
 }
