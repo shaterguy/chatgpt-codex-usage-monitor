@@ -18,6 +18,10 @@
   user-select: none;
 }
 
+:host([data-layout="hidden"]) {
+  display: none !important;
+}
+
 @media (prefers-color-scheme: dark) {
   :host {
     --cub-bg: rgba(30, 31, 34, 0.9);
@@ -59,11 +63,6 @@ button, select, a {
 
 .cub-card.cub-expanded {
   width: 304px;
-}
-
-.cub-card.cub-dragging {
-  cursor: grabbing;
-  box-shadow: 0 24px 65px rgba(15, 23, 42, 0.28), 0 5px 18px rgba(15, 23, 42, 0.16);
 }
 
 .cub-summary {
@@ -772,17 +771,8 @@ button, select, a {
   height: 15px;
 }
 
-:host([data-layout="integrated"]) #cub-reset-position {
-  display: none;
-}
-
 @keyframes cub-spin {
   to { transform: rotate(360deg); }
-}
-
-@media (max-width: 520px) {
-  :host([data-layout="floating"]) .cub-card { width: 246px; }
-  :host([data-layout="floating"]) .cub-card.cub-expanded { width: min(292px, calc(100vw - 16px)); }
 }
 
 @media (max-width: 1100px) {
@@ -817,6 +807,70 @@ button, select, a {
   :host([data-layout="integrated"]) .cub-server-label {
     display: none;
   }
+}
+
+:host([data-layout="integrated"][data-sidebar="collapsed"]) {
+  width: 32px;
+  height: 34px;
+  margin: 0;
+}
+
+:host([data-layout="integrated"][data-sidebar="collapsed"]) .cub-card,
+:host([data-layout="integrated"][data-sidebar="collapsed"]) .cub-card.cub-expanded {
+  width: 32px;
+  border-radius: 8px;
+}
+
+:host([data-layout="integrated"][data-sidebar="collapsed"]) .cub-summary {
+  position: relative;
+  grid-template-areas:
+    "value"
+    "track";
+  grid-template-columns: 1fr;
+  gap: 2px;
+  min-height: 32px;
+  padding: 5px 4px 4px;
+}
+
+:host([data-layout="integrated"][data-sidebar="collapsed"]) .cub-brand,
+:host([data-layout="integrated"][data-sidebar="collapsed"]) .cub-title,
+:host([data-layout="integrated"][data-sidebar="collapsed"]) .cub-plan,
+:host([data-layout="integrated"][data-sidebar="collapsed"]) .cub-server-label,
+:host([data-layout="integrated"][data-sidebar="collapsed"]) .cub-toggle {
+  display: none;
+}
+
+:host([data-layout="integrated"][data-sidebar="collapsed"]) .cub-summary-main {
+  grid-area: track;
+  width: 100%;
+}
+
+:host([data-layout="integrated"][data-sidebar="collapsed"]) .cub-summary-labels {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  display: block;
+  margin: 0;
+}
+
+:host([data-layout="integrated"][data-sidebar="collapsed"]) .cub-server-dot {
+  display: block;
+  width: 4px;
+  height: 4px;
+  margin: 0;
+  box-shadow: none;
+}
+
+:host([data-layout="integrated"][data-sidebar="collapsed"]) .cub-summary-value {
+  grid-area: value;
+  min-width: 0;
+  text-align: center;
+  font-size: 9px;
+  line-height: 1.1;
+}
+
+:host([data-layout="integrated"][data-sidebar="collapsed"]) .cub-track-summary {
+  height: 2px;
 }
 
 @media (prefers-reduced-motion: reduce) {
