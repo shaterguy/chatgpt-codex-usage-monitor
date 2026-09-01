@@ -1,0 +1,76 @@
+name: Reader Cloudflare PoC
+
+on:
+  push:
+    branches:
+      - reader-cloudflare-poc
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tunnel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start reader
+        run: |
+          node poc/reader-cloudflare/reader.js > reader.log 2>&1 &
+          echo $! > reader.pid
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:3000/health >/dev/null; then
+              echo "Reader is healthy"
+              exit 0
+            fi
+            sleep 1
+          done
+          cat reader.log
+          exit 1
+
+      - name: Start Cloudflare Quick Tunnel
+        run: |
+          curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
+          chmod +x cloudflared
+          nohup ./cloudflared tunnel --url http://127.0.0.1:3000 --no-autoupdate > tunnel.log 2>&1 &
+          echo $! > cloudflared.pid
+          for i in {1..60}; do
+            TUNNEL_URL=$(grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com' tunnel.log | head -n1 || true)
+            if [ -n "$TUNNEL_URL" ]; then
+              NATE_TOKEN='aHR0cHM6Ly93d3cubmF0ZS5jb20'
+              echo "TUNNEL_URL=$TUNNEL_URL"
+              echo "READER_URL=$TUNNEL_URL/u/$NATE_TOKEN"
+              echo "TUNNEL_URL=$TUNNEL_URL" >> "$GITHUB_ENV"
+              echo "READER_URL=$TUNNEL_URL/u/$NATE_TOKEN" >> "$GITHUB_ENV"
+              break
+            fi
+            sleep 1
+          done
+          if [ -z "${TUNNEL_URL:-}" ]; then
+            cat tunnel.log
+            exit 1
+          fi
+
+      - name: Verify public reader
+        run: |
+          for i in {1..30}; do
+            if OUT=$(curl -fsSL "$READER_URL" 2>/dev/null); then
+              echo "$OUT" | grep -q 'CF_READER_POC_20260901'
+              echo "$OUT" | grep -q 'TARGET: https://www.nate.com'
+              echo "PUBLIC_READER_OK"
+              echo "READER_URL=$READER_URL"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Public reader verification failed"
+          cat tunnel.log
+          exit 1
+
+      - name: Keep tunnel alive for testing
+        run: |
+          echo "READER_URL=$READER_URL"
+          echo "Tunnel kept alive for 20 minutes"
+          sleep 1200
