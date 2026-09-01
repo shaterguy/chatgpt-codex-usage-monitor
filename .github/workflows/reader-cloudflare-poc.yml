@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  issues: write
 
 jobs:
   tunnel:
@@ -52,6 +53,14 @@ jobs:
             cat tunnel.log
             exit 1
           fi
+
+      - name: Publish test URL
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create \
+            --title "Cloudflare Reader PoC URL $GITHUB_RUN_ID" \
+            --body "Temporary Reader URL for ChatGPT web validation: [$READER_URL]($READER_URL)\n\nExpected marker: CF_READER_POC_20260901\nTarget: https://www.nate.com"
 
       - name: Verify public reader
         run: |
