@@ -24,11 +24,20 @@
     return preferred ? preferred.element : null;
   }
 
+  function shouldKeepIntegratedMount(snapshot) {
+    if (!snapshot || snapshot.layoutMode !== "integrated") return false;
+    return snapshot.hostConnected === true &&
+      snapshot.parentConnected === true &&
+      snapshot.sidebarConnected === true &&
+      snapshot.hostInsideSidebar === true;
+  }
+
   const api = Object.freeze({
     COLLAPSED_SIDEBAR_MAX_WIDTH,
     NEW_CHAT_SELECTORS,
     classifySidebarWidth,
-    selectSidebarAnchorCandidate
+    selectSidebarAnchorCandidate,
+    shouldKeepIntegratedMount
   });
 
   globalScope.CodexUsageLayoutCore = api;

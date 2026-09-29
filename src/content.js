@@ -519,11 +519,28 @@
     updateSummaryAria();
   }
 
+  function currentIntegratedMountIsValid() {
+    const sidebar = state.sidebarRoot;
+    const parent = host.parentElement;
+    return layoutCore.shouldKeepIntegratedMount({
+      layoutMode: state.layoutMode,
+      hostConnected: host.isConnected,
+      parentConnected: Boolean(parent && parent.isConnected),
+      sidebarConnected: Boolean(sidebar && sidebar.isConnected),
+      hostInsideSidebar: Boolean(sidebar && sidebar.contains(host))
+    });
+  }
+
   function ensureMounted() {
     state.mountTimer = null;
     state.lastMountAttemptAt = Date.now();
     const target = findSidebarMountTarget();
-    if (!mountIntegrated(target)) mountHidden();
+    if (mountIntegrated(target)) return;
+    if (currentIntegratedMountIsValid()) {
+      updateSidebarDensity(state.sidebarRoot);
+      return;
+    }
+    mountHidden();
   }
 
   function scheduleMount(delay) {

@@ -56,3 +56,43 @@ test("New chat data-testid 선택자는 태그 종류와 무관하게 동작한�
   assert.ok(layout.NEW_CHAT_SELECTORS.includes("[data-testid='new-chat-button']"));
   assert.ok(!layout.NEW_CHAT_SELECTORS.some((selector) => selector.startsWith("button[data-testid=")));
 });
+
+test("일시적인 앵커 탐색 실패 중 현재 통합 마운트가 유효하면 유지한다", () => {
+  assert.equal(layout.shouldKeepIntegratedMount({
+    layoutMode: "integrated",
+    hostConnected: true,
+    parentConnected: true,
+    sidebarConnected: true,
+    hostInsideSidebar: true
+  }), true);
+});
+
+test("SPA 교체로 기존 사이드바 연결이 끊기면 현재 통합 마운트를 유지하지 않는다", () => {
+  assert.equal(layout.shouldKeepIntegratedMount({
+    layoutMode: "integrated",
+    hostConnected: true,
+    parentConnected: true,
+    sidebarConnected: false,
+    hostInsideSidebar: false
+  }), false);
+});
+
+test("호스트 부모가 분리되면 연결된 것처럼 보여도 현재 통합 마운트를 유지하지 않는다", () => {
+  assert.equal(layout.shouldKeepIntegratedMount({
+    layoutMode: "integrated",
+    hostConnected: true,
+    parentConnected: false,
+    sidebarConnected: true,
+    hostInsideSidebar: true
+  }), false);
+});
+
+test("초기 hidden 상태는 통합 마운트 유지 대상으로 보지 않는다", () => {
+  assert.equal(layout.shouldKeepIntegratedMount({
+    layoutMode: "hidden",
+    hostConnected: true,
+    parentConnected: true,
+    sidebarConnected: true,
+    hostInsideSidebar: true
+  }), false);
+});
