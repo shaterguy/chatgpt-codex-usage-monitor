@@ -269,7 +269,15 @@
     ].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
   }
 
-  function findSemanticElement(root, selectors, pattern) {
+  function findSemanticElements(root, selectors, pattern) {
+    const matches = [];
+    const seen = new Set();
+    const append = (candidate) => {
+      if (!candidate || seen.has(candidate)) return;
+      if (pattern && !pattern.test(elementLabel(candidate))) return;
+      seen.add(candidate);
+      matches.push(candidate);
+    };
     for (const selector of selectors) {
       let candidates = [];
       try {
@@ -277,11 +285,38 @@
       } catch (_error) {
         candidates = [];
       }
-      const match = candidates.find((candidate) => !pattern || pattern.test(elementLabel(candidate)));
-      if (match) return match;
+      candidates.forEach(append);
     }
-    const interactive = [...root.querySelectorAll("button, a, [role='button']")];
-    return interactive.find((candidate) => pattern.test(elementLabel(candidate))) || null;
+    [...root.querySelectorAll("button, a, [role='button']")].forEach(append);
+    return matches;
+  }
+
+  function findSemanticElement(root, selectors, pattern) {
+    return findSemanticElements(root, selectors, pattern)[0] || null;
+  }
+
+  function isMountCandidateVisible(element) {
+    if (!element || !element.isConnected) return false;
+    if (element.closest("[hidden], [inert], [aria-hidden='true']")) return false;
+    let current = element;
+    for (let depth = 0; current && depth < 10; depth += 1, current = current.parentElement) {
+      const style = window.getComputedStyle(current);
+      const opacity = Number.parseFloat(style.opacity);
+      if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse" ||
+        style.pointerEvents === "none" || opacity === 0) return false;
+    }
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }
+
+  function findPreferredSemanticElement(root, selectors, pattern) {
+    const entries = findSemanticElements(root, selectors, pattern).map((element) => ({
+      element,
+      connected: Boolean(element.isConnected),
+      visible: isMountCandidateVisible(element),
+      insideTinyBar: Boolean(element.closest("#stage-sidebar-tiny-bar"))
+    }));
+    return layoutCore.selectSidebarAnchorCandidate(entries);
   }
 
   function commonMountTarget(planElement, newChatElement) {
@@ -304,6 +339,13 @@
       if (before && interactiveCount >= 2 && interactiveCount <= 12) return { container: ancestor, before };
     }
     return null;
+  }
+
+  function nativeSidebarListTarget(newChatElement, sidebar) {
+    const list = newChatElement && newChatElement.closest("ul");
+    if (!list || !sidebar || !sidebar.contains(list)) return null;
+    const before = directChildBelow(newChatElement, list);
+    return before ? { container: list, before } : null;
   }
 
   function findSidebarRoot(element) {
@@ -346,14 +388,7 @@
   }
 
   function findSidebarMountTarget() {
-    const newChatSelectors = [
-      "[data-testid='create-new-chat-button']",
-      "[data-testid='new-chat-button']",
-      "button[aria-label*='new chat' i]",
-      "a[aria-label*='new chat' i]",
-      "button[aria-label*='새 채팅']",
-      "a[aria-label*='새 채팅']"
-    ];
+    const newChatSelectors = layoutCore.NEW_CHAT_SELECTORS;
     const planSelectors = [
       "[data-testid*='upgrade']",
       "[data-testid*='plan']",
@@ -376,13 +411,15 @@
     const roots = [...new Set([...explicitSidebarRoots, document])];
 
     for (const root of roots) {
-      const newChat = findSemanticElement(root, newChatSelectors, newChatPattern);
+      const newChat = findPreferredSemanticElement(root, newChatSelectors, newChatPattern);
       if (!newChat) continue;
       const sidebar = findSidebarRoot(newChat);
       if (!sidebar || !sidebar.isConnected) continue;
       const plan = findSemanticElement(sidebar, planSelectors, planPattern);
       const exact = commonMountTarget(plan, newChat);
       if (exact && sidebar.contains(exact.container)) return { ...exact, sidebar };
+      const nativeList = nativeSidebarListTarget(newChat, sidebar);
+      if (nativeList) return { ...nativeList, sidebar };
       const nearby = nearbyNewChatTarget(newChat, sidebar);
       if (nearby) return { ...nearby, sidebar };
     }
