@@ -387,7 +387,37 @@
     return semanticCandidate || geometryCandidate;
   }
 
+  // The redesigned app shell has a persistent icon rail beside a separately
+  // hidden conversation panel. Reserve a row in the header, never in its
+  // horizontal New-chat controls.
+  function findAppShellMountTarget(shell) {
+    const content = shell.querySelector("[data-slate-sidebar-content]");
+    if (isMountCandidateVisible(content)) {
+      const toggle = content.querySelector("button[aria-controls='app-shell-sidebar']");
+      let header = toggle && toggle.parentElement;
+      for (let depth = 0; header && header !== content && header.tagName !== "NAV" && depth < 5;
+        depth += 1, header = header.parentElement) {
+        if (window.getComputedStyle(header).flexDirection !== "column") continue;
+        const newChat = findPreferredSemanticElement(header, layoutCore.NEW_CHAT_SELECTORS,
+          /(?:new\s*chat|새\s*채팅|새로운\s*채팅)/i);
+        const target = commonMountTarget(toggle, newChat);
+        if (target && target.container === header) return { ...target, sidebar: content };
+      }
+      // Keep a visible, valid row through a transient header replacement.
+      if (content.contains(host) && currentIntegratedMountIsValid()) return null;
+    }
+    const rail = shell.querySelector("[data-app-navigation-rail]");
+    const home = rail && rail.querySelector("[data-sidebar-destination='builtin:home']");
+    const list = home && home.closest("[data-appearance]");
+    const before = list && directChildBelow(home, list);
+    if (!isMountCandidateVisible(rail) || !isMountCandidateVisible(home) ||
+      !list || !rail.contains(list) || !before) return null;
+    return { container: list, before, sidebar: rail };
+  }
+
   function findSidebarMountTarget() {
+    const appShell = document.getElementById("app-shell-sidebar");
+    if (appShell) return findAppShellMountTarget(appShell);
     const newChatSelectors = layoutCore.NEW_CHAT_SELECTORS;
     const planSelectors = [
       "[data-testid*='upgrade']",
@@ -448,7 +478,10 @@
 
   let observedSidebar = null;
   const sidebarResizeObserver = typeof ResizeObserver === "function"
-    ? new ResizeObserver(() => updateSidebarDensity(observedSidebar))
+    ? new ResizeObserver(() => {
+      updateSidebarDensity(observedSidebar);
+      scheduleMount(80);
+    })
     : null;
 
   function updateSidebarDensity(sidebar) {
@@ -456,6 +489,7 @@
     const rect = sidebar.getBoundingClientRect();
     const density = layoutCore.classifySidebarWidth(rect.width || sidebar.clientWidth);
     host.dataset.sidebar = density === "collapsed" ? "collapsed" : "expanded";
+    host.dataset.compact = String(host.getBoundingClientRect().width <= 190);
     requestAnimationFrame(positionPopover);
   }
 
@@ -509,6 +543,7 @@
     state.layoutMode = "hidden";
     host.dataset.layout = "hidden";
     delete host.dataset.sidebar;
+    delete host.dataset.compact;
     host.style.position = "fixed";
     host.style.zIndex = "2147483646";
     host.style.left = "0px";
@@ -522,7 +557,8 @@
   function currentIntegratedMountIsValid() {
     const sidebar = state.sidebarRoot;
     const parent = host.parentElement;
-    return layoutCore.shouldKeepIntegratedMount({
+    return isMountCandidateVisible(parent) && isMountCandidateVisible(sidebar) &&
+      layoutCore.shouldKeepIntegratedMount({
       layoutMode: state.layoutMode,
       hostConnected: host.isConnected,
       parentConnected: Boolean(parent && parent.isConnected),
@@ -1086,7 +1122,11 @@
   }
 
   const observer = new MutationObserver((mutations) => {
+    const layoutAttributeChanged = mutations.some((mutation) =>
+      mutation.type === "attributes" && !isInsideWidget(mutation.target) &&
+      (mutation.target.contains(host) || mutation.target.closest("#app-shell-sidebar")));
     if (!host.isConnected) scheduleMount(0);
+    else if (layoutAttributeChanged) scheduleMount(80);
     else if (state.layoutMode === "hidden" && Date.now() - state.lastMountAttemptAt > 2_000) scheduleMount(120);
     else if (state.layoutMode === "integrated" && Date.now() - state.lastMountAttemptAt > 2_000) scheduleMount(180);
     if (mutations.some(mutationTouchesAssistant)) scheduleActivityRefresh(3200);
@@ -1094,7 +1134,10 @@
       state.generationCheckTimer = setTimeout(checkGenerationTransition, 350);
     }
   });
-  observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+  observer.observe(document.documentElement, {
+    childList: true, subtree: true, characterData: true, attributes: true,
+    attributeFilter: ["class", "style", "hidden", "inert", "aria-hidden", "aria-expanded"]
+  });
 
   document.addEventListener("submit", (event) => {
     if (isInsideWidget(event.target)) return;
@@ -1115,6 +1158,7 @@
   });
   window.addEventListener("focus", () => refreshAll("focus", false));
   window.addEventListener("resize", () => {
+    scheduleMount(80);
     updateSidebarDensity(state.sidebarRoot);
     positionPopover();
   });
